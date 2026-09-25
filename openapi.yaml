@@ -1,0 +1,510 @@
+openapi: 3.0.3
+info:
+  description: |
+    API for browsing cinema showings and ordering tickets. An order is created in a PENDING state (seats on hold), filled in step by step with PATCH, and then confirmed. If it is not confirmed before the hold expires, the order lapses on its own and the seats are released - no endpoint is called for that.
+  title: Event Ticket API
+  version: 1.0.0
+servers:
+- description: Development server
+  url: https://api.example.com/v1
+tags:
+- description: Read-only cinema schedule data
+  name: Showings
+- description: "Create, fill in, confirm and cancel ticket orders"
+  name: Orders
+paths:
+  /showings:
+    get:
+      description: |
+        Returns the showings scheduled by the cinema, including theater name, location, date and time. The client picks one and passes its id when creating an order.
+      parameters:
+      - explode: true
+        in: query
+        name: movieId
+        required: false
+        schema:
+          type: string
+        style: form
+      - explode: true
+        in: query
+        name: date
+        required: false
+        schema:
+          format: date
+          type: string
+        style: form
+      - explode: true
+        in: query
+        name: city
+        required: false
+        schema:
+          type: string
+        style: form
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/Showing"
+                type: array
+          description: List of showings
+      summary: List available showings
+      tags:
+      - Showings
+  /showings/{showingId}:
+    get:
+      parameters:
+      - explode: false
+        in: path
+        name: showingId
+        required: true
+        schema:
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Showing"
+          description: Showing details
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Resource not found
+      summary: Get a single showing
+      tags:
+      - Showings
+  /showings/{showingId}/seats:
+    get:
+      description: "Shows which seats are AVAILABLE, HELD or SOLD."
+      parameters:
+      - explode: false
+        in: path
+        name: showingId
+        required: true
+        schema:
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/Seat"
+                type: array
+          description: Seat map
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Resource not found
+      summary: Get the seat map for a showing
+      tags:
+      - Showings
+  /orders:
+    post:
+      description: |
+        Creates the order and references the showing by id. Theater name, location, date and time are NOT sent here - they are read from the showing on the server. The response includes holdExpiresAt.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderCreateRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+          description: Order created in PENDING state
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Invalid request
+        "409":
+          description: One or more of the requested seats are no longer available
+      security:
+      - bearerAuth: []
+      summary: "Create an order (status PENDING, seats put on hold)"
+      tags:
+      - Orders
+  /orders/{orderId}:
+    delete:
+      description: |
+        A deliberate cancellation by the user. Releases the seats and triggers a refund if the order was already paid. This is NOT the same as a hold that simply expired.
+      parameters:
+      - explode: false
+        in: path
+        name: orderId
+        required: true
+        schema:
+          type: string
+        style: simple
+      responses:
+        "204":
+          description: Order cancelled
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Resource not found
+        "409":
+          description: Order can no longer be cancelled
+      security:
+      - bearerAuth: []
+      summary: Cancel an order
+      tags:
+      - Orders
+    get:
+      parameters:
+      - explode: false
+        in: path
+        name: orderId
+        required: true
+        schema:
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+          description: Order details
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Resource not found
+      security:
+      - bearerAuth: []
+      summary: Get an order and its details
+      tags:
+      - Orders
+    patch:
+      description: |
+        Fills in the order piece by piece while it is still on hold - seats, payment, passenger name. Only the fields you send are changed; everything else stays as it was. Allowed only while status is PENDING.
+      parameters:
+      - explode: false
+        in: path
+        name: orderId
+        required: true
+        schema:
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderPatchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+          description: Updated order
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Resource not found
+        "409":
+          description: "Order is not PENDING (already confirmed, cancelled or expired)"
+      security:
+      - bearerAuth: []
+      summary: Update a PENDING order (partial update)
+      tags:
+      - Orders
+  /orders/{orderId}/confirm:
+    post:
+      description: |
+        Finalizes a PENDING order. The server charges the saved payment token through the payment gateway; the gateway and the card companies decide whether the card is valid. On success the status becomes CONFIRMED and the tickets are issued.
+      parameters:
+      - explode: false
+        in: path
+        name: orderId
+        required: true
+        schema:
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+          description: Order confirmed
+        "402":
+          description: Payment declined by the payment gateway
+        "409":
+          description: "Order is not PENDING, or the hold has already expired"
+      security:
+      - bearerAuth: []
+      summary: Confirm the order
+      tags:
+      - Orders
+components:
+  parameters:
+    ShowingId:
+      explode: false
+      in: path
+      name: showingId
+      required: true
+      schema:
+        type: string
+      style: simple
+    OrderId:
+      explode: false
+      in: path
+      name: orderId
+      required: true
+      schema:
+        type: string
+      style: simple
+  responses:
+    NotFound:
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+      description: Resource not found
+    BadRequest:
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+      description: Invalid request
+  schemas:
+    Showing:
+      example:
+        id: shw_10293
+        movieTitle: The Fellowship of the Ring
+        theaterName: Cinema City Glilot
+        location: "Glilot, Tel Aviv"
+        hallNumber: 7
+        startsAt: 2000-01-23T04:56:07.000+00:00
+        pricePerSeat: 49.9
+        currency: ILS
+      properties:
+        id:
+          example: shw_10293
+          title: id
+          type: string
+        movieTitle:
+          example: The Fellowship of the Ring
+          title: movieTitle
+          type: string
+        theaterName:
+          example: Cinema City Glilot
+          title: theaterName
+          type: string
+        location:
+          example: "Glilot, Tel Aviv"
+          title: location
+          type: string
+        hallNumber:
+          example: 7
+          title: hallNumber
+          type: integer
+        startsAt:
+          format: date-time
+          title: startsAt
+          type: string
+        pricePerSeat:
+          example: 49.9
+          format: float
+          title: pricePerSeat
+          type: number
+        currency:
+          example: ILS
+          title: currency
+          type: string
+      title: Showing
+      type: object
+    Seat:
+      example:
+        seatNumber: A5
+        status: AVAILABLE
+      properties:
+        seatNumber:
+          example: A5
+          title: seatNumber
+          type: string
+        status:
+          enum:
+          - AVAILABLE
+          - HELD
+          - SOLD
+          title: status
+          type: string
+      title: Seat
+      type: object
+    OrderCreateRequest:
+      example:
+        showingId: shw_10293
+        seats:
+        - A5
+        - A6
+      properties:
+        showingId:
+          example: shw_10293
+          title: showingId
+          type: string
+        seats:
+          example:
+          - A5
+          - A6
+          items:
+            type: string
+          title: seats
+          type: array
+      required:
+      - seats
+      - showingId
+      title: OrderCreateRequest
+      type: object
+    OrderPatchRequest:
+      description: |
+        Partial update - send only the fields you want to change. The raw card number is never stored; paymentToken comes from the payment gateway (Stripe, Tranzila, etc.).
+      example:
+        seats:
+        - B3
+        - B4
+        passengerName: Rami
+        contactEmail: contactEmail
+        paymentToken: tok_1Kx9aB2eZvKYlo2C
+      properties:
+        seats:
+          example:
+          - B3
+          - B4
+          items:
+            type: string
+          title: seats
+          type: array
+        passengerName:
+          example: Rami
+          title: passengerName
+          type: string
+        contactEmail:
+          format: email
+          title: contactEmail
+          type: string
+        paymentToken:
+          example: tok_1Kx9aB2eZvKYlo2C
+          title: paymentToken
+          type: string
+      title: OrderPatchRequest
+      type: object
+    Order:
+      example:
+        id: ord_55871
+        status: PENDING
+        showingId: showingId
+        showing:
+          id: shw_10293
+          movieTitle: The Fellowship of the Ring
+          theaterName: Cinema City Glilot
+          location: "Glilot, Tel Aviv"
+          hallNumber: 7
+          startsAt: 2000-01-23T04:56:07.000+00:00
+          pricePerSeat: 49.9
+          currency: ILS
+        seats:
+        - seats
+        - seats
+        passengerName: passengerName
+        contactEmail: contactEmail
+        paymentToken: paymentToken
+        totalPrice: 0.8008282
+        currency: ILS
+        createdAt: 2000-01-23T04:56:07.000+00:00
+        holdExpiresAt: 2000-01-23T04:56:07.000+00:00
+      properties:
+        id:
+          example: ord_55871
+          title: id
+          type: string
+        status:
+          enum:
+          - PENDING
+          - CONFIRMED
+          - CANCELLED
+          - EXPIRED
+          title: status
+          type: string
+        showingId:
+          title: showingId
+          type: string
+        showing:
+          $ref: "#/components/schemas/Showing"
+        seats:
+          items:
+            type: string
+          title: seats
+          type: array
+        passengerName:
+          title: passengerName
+          type: string
+        contactEmail:
+          format: email
+          title: contactEmail
+          type: string
+        paymentToken:
+          description: Token returned by the payment gateway. Never the card number.
+          title: paymentToken
+          type: string
+        totalPrice:
+          format: float
+          title: totalPrice
+          type: number
+        currency:
+          example: ILS
+          title: currency
+          type: string
+        createdAt:
+          format: date-time
+          title: createdAt
+          type: string
+        holdExpiresAt:
+          description: |
+            When the hold on the seats expires. If the order is not confirmed by then, the server marks it EXPIRED and releases the seats. No client request is involved.
+          format: date-time
+          title: holdExpiresAt
+          type: string
+      title: Order
+      type: object
+    Error:
+      example:
+        code: ORDER_NOT_FOUND
+        message: The requested order does not exist.
+      properties:
+        code:
+          example: ORDER_NOT_FOUND
+          title: code
+          type: string
+        message:
+          example: The requested order does not exist.
+          title: message
+          type: string
+      title: Error
+      type: object
+  securitySchemes:
+    bearerAuth:
+      bearerFormat: JWT
+      scheme: bearer
+      type: http
