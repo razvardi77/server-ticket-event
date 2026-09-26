@@ -39,6 +39,7 @@ for _, name, _ in pkgutil.iter_modules(ns_pkg.__path__, ns_pkg.__name__ + "."):
 
 @router.post(
     "/orders",
+    status_code=201,
     responses={
         201: {"model": Order, "description": "Order created in PENDING state"},
         400: {"model": Error, "description": "Invalid request"},
@@ -57,7 +58,7 @@ async def orders_post(
     """Creates the order and references the showing by id. Theater name, location, date and time are NOT sent here - they are read from the showing on the server. The response includes holdExpiresAt. """
     if not BaseOrdersApi.subclasses:
         raise HTTPException(status_code=500, detail="Not implemented")
-    return await BaseOrdersApi.subclasses[0]().orders_post(order_create_request)
+    return await BaseOrdersApi.subclasses[0]().orders_post(order_create_request, token_bearerAuth.sub)
 
 
 @router.get(
@@ -78,11 +79,13 @@ async def orders_order_id_get(
 ) -> Order:
     if not BaseOrdersApi.subclasses:
         raise HTTPException(status_code=500, detail="Not implemented")
-    return await BaseOrdersApi.subclasses[0]().orders_order_id_get(orderId)
+    return await BaseOrdersApi.subclasses[0]().orders_order_id_get(orderId, token_bearerAuth.sub)
 
 
 @router.delete(
     "/orders/{orderId}",
+    status_code=204,
+    response_class=Response,
     responses={
         204: {"description": "Order cancelled"},
         404: {"model": Error, "description": "Resource not found"},
@@ -101,7 +104,7 @@ async def orders_order_id_delete(
     """A deliberate cancellation by the user. Releases the seats and triggers a refund if the order was already paid. This is NOT the same as a hold that simply expired. """
     if not BaseOrdersApi.subclasses:
         raise HTTPException(status_code=500, detail="Not implemented")
-    return await BaseOrdersApi.subclasses[0]().orders_order_id_delete(orderId)
+    return await BaseOrdersApi.subclasses[0]().orders_order_id_delete(orderId, token_bearerAuth.sub)
 
 
 @router.patch(
@@ -125,7 +128,7 @@ async def orders_order_id_patch(
     """Fills in the order piece by piece while it is still on hold - seats, payment, passenger name. Only the fields you send are changed; everything else stays as it was. Allowed only while status is PENDING. """
     if not BaseOrdersApi.subclasses:
         raise HTTPException(status_code=500, detail="Not implemented")
-    return await BaseOrdersApi.subclasses[0]().orders_order_id_patch(orderId, order_patch_request)
+    return await BaseOrdersApi.subclasses[0]().orders_order_id_patch(orderId, order_patch_request, token_bearerAuth.sub)
 
 
 @router.post(
@@ -148,4 +151,4 @@ async def orders_order_id_confirm_post(
     """Finalizes a PENDING order. The server charges the saved payment token through the payment gateway; the gateway and the card companies decide whether the card is valid. On success the status becomes CONFIRMED and the tickets are issued. """
     if not BaseOrdersApi.subclasses:
         raise HTTPException(status_code=500, detail="Not implemented")
-    return await BaseOrdersApi.subclasses[0]().orders_order_id_confirm_post(orderId)
+    return await BaseOrdersApi.subclasses[0]().orders_order_id_confirm_post(orderId, token_bearerAuth.sub)

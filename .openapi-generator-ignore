@@ -21,3 +21,9 @@
 #docs/*.md
 # Then explicitly reverse the ignore rule for a single file:
 #!docs/README.md
+
+# Hand-edited: JWT auth, error handlers, auth router, orders ownership + status codes
+src/openapi_server/security_api.py
+src/openapi_server/main.py
+src/openapi_server/apis/orders_api.py
+src/openapi_server/apis/orders_api_base.py

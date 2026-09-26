@@ -4,8 +4,8 @@
 # The generated files (showings_api.py, showings_api_base.py) stay untouched:
 # showings_api.py automatically finds this class because it lives in the impl folder.
 
-from datetime import datetime
-from typing import List, Optional
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Set, Tuple
 
 from openapi_server.apis.showings_api_base import BaseShowingsApi
 from openapi_server.errors import ApiError
@@ -50,15 +50,32 @@ SHOWINGS = [
     },
 ]
 
-# Which seats are already taken, per showing
-SOLD = {"shw_10293": {"A1", "A2", "B3"}, "shw_20511": {"C5", "C6"}}
-HELD = {"shw_10293": {"A5", "A6"}}
+# Which seats are already taken, per showing.
+# SOLD: showingId -> {seat}
+# HELD: showingId -> {seat: (orderId, expiresAt)}; None/None = a permanent demo hold.
+SOLD: Dict[str, Set[str]] = {"shw_10293": {"A1", "A2", "B3"}, "shw_20511": {"C5", "C6"}}
+HELD: Dict[str, Dict[str, Tuple[Optional[str], Optional[datetime]]]] = {
+    "shw_10293": {"A5": (None, None), "A6": (None, None)},
+}
 
 ROWS = "ABC"
 SEATS_PER_ROW = 6
 
 
 # ---- Helpers ----
+def seat_exists(seat: str) -> bool:
+    return len(seat) >= 2 and seat[0] in ROWS and seat[1:].isdigit() and 1 <= int(seat[1:]) <= SEATS_PER_ROW
+
+
+def active_holds(showing_id: str) -> Dict[str, Tuple[Optional[str], Optional[datetime]]]:
+    """HELD for one showing, after dropping holds whose time has run out."""
+    holds = HELD.setdefault(showing_id, {})
+    now = datetime.now(timezone.utc)
+    for seat in [s for s, (_, exp) in holds.items() if exp is not None and exp <= now]:
+        del holds[seat]
+    return holds
+
+
 def _find_showing(showing_id: str) -> dict:
     for s in SHOWINGS:
         if s["id"] == showing_id:
@@ -95,7 +112,7 @@ class ShowingsImpl(BaseShowingsApi):
         """GET /showings/{showingId}/seats - seat map, or 404."""
         _find_showing(showingId)  # raises 404 if it doesn't exist
         sold = SOLD.get(showingId, set())
-        held = HELD.get(showingId, set())
+        held = active_holds(showingId)
 
         seats = []
         for row in ROWS:
