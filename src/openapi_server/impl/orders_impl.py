@@ -57,7 +57,7 @@ def _check_seats(showing_id: str, seats: List[str], order_id: str = None) -> Non
         raise ApiError(400, "INVALID_SEATS", "At least one seat is required.")
     if len(set(seats)) != len(seats):
         raise ApiError(400, "INVALID_SEATS", "The same seat appears more than once.")
-    bad = [s for s in seats if not seat_exists(s)]
+    bad = [s for s in seats if not seat_exists(showing_id, s)]
     if bad:
         raise ApiError(400, "INVALID_SEATS", f"No such seat(s): {', '.join(bad)}.")
 

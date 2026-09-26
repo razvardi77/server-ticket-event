@@ -14,7 +14,10 @@ from openapi_server.models.showing import Showing
 
 
 # ---- Demo data (later this will come from a database) ----
+# Two chains: Cinema City and Cinema Planet (formerly Yes Planet).
+# Times are Israel local time: +03:00 until DST ends on 2026-10-25, +02:00 after.
 SHOWINGS = [
+    # ---- Cinema City ----
     {
         "movieId": "mov_lotr1",
         "id": "shw_10293",
@@ -27,10 +30,66 @@ SHOWINGS = [
         "currency": "ILS",
     },
     {
+        "movieId": "mov_dune2",
+        "id": "shw_30101",
+        "movieTitle": "Dune: Part Two",
+        "theaterName": "Cinema City Glilot",
+        "location": "Glilot, Tel Aviv",
+        "hallNumber": 11,
+        "startsAt": "2026-10-06T22:00:00+03:00",
+        "pricePerSeat": 72.0,
+        "currency": "ILS",
+    },
+    {
+        "movieId": "mov_interstellar",
+        "id": "shw_20511",
+        "movieTitle": "Interstellar",
+        "theaterName": "Cinema City Jerusalem",
+        "location": "Jerusalem",
+        "hallNumber": 1,
+        "startsAt": "2026-10-02T21:00:00+03:00",
+        "pricePerSeat": 42.0,
+        "currency": "ILS",
+    },
+    {
+        "movieId": "mov_oppenheimer",
+        "id": "shw_50301",
+        "movieTitle": "Oppenheimer",
+        "theaterName": "Cinema City Jerusalem",
+        "location": "Jerusalem",
+        "hallNumber": 9,
+        "startsAt": "2026-10-08T20:15:00+03:00",
+        "pricePerSeat": 52.0,
+        "currency": "ILS",
+    },
+    {
+        "movieId": "mov_lotr2",
+        "id": "shw_10310",
+        "movieTitle": "The Two Towers",
+        "theaterName": "Cinema City Rishon LeZion",
+        "location": "Rishon LeZion",
+        "hallNumber": 4,
+        "startsAt": "2026-10-04T19:45:00+03:00",
+        "pricePerSeat": 47.0,
+        "currency": "ILS",
+    },
+    {
+        "movieId": "mov_spirited",
+        "id": "shw_40202",
+        "movieTitle": "Spirited Away",
+        "theaterName": "Cinema City Rishon LeZion",
+        "location": "Rishon LeZion",
+        "hallNumber": 6,
+        "startsAt": "2026-10-10T16:30:00+03:00",
+        "pricePerSeat": 38.5,
+        "currency": "ILS",
+    },
+    # ---- Cinema Planet ----
+    {
         "movieId": "mov_lotr1",
         "id": "shw_10294",
         "movieTitle": "The Fellowship of the Ring",
-        "theaterName": "Yes Planet Haifa",
+        "theaterName": "Cinema Planet Haifa",
         "location": "Haifa",
         "hallNumber": 3,
         "startsAt": "2026-10-03T18:00:00+03:00",
@@ -39,32 +98,101 @@ SHOWINGS = [
     },
     {
         "movieId": "mov_interstellar",
-        "id": "shw_20511",
+        "id": "shw_20530",
         "movieTitle": "Interstellar",
-        "theaterName": "Lev Smadar",
+        "theaterName": "Cinema Planet Rishonim",
+        "location": "Rishonim, Rishon LeZion",
+        "hallNumber": 12,
+        "startsAt": "2026-10-05T21:30:00+03:00",
+        "pricePerSeat": 64.0,
+        "currency": "ILS",
+    },
+    {
+        "movieId": "mov_inception",
+        "id": "shw_60401",
+        "movieTitle": "Inception",
+        "theaterName": "Cinema Planet Rishonim",
+        "location": "Rishonim, Rishon LeZion",
+        "hallNumber": 3,
+        "startsAt": "2026-11-05T21:00:00+02:00",
+        "pricePerSeat": 46.0,
+        "currency": "ILS",
+    },
+    {
+        "movieId": "mov_spirited",
+        "id": "shw_40201",
+        "movieTitle": "Spirited Away",
+        "theaterName": "Cinema Planet Jerusalem",
         "location": "Jerusalem",
-        "hallNumber": 1,
-        "startsAt": "2026-10-02T21:00:00+03:00",
-        "pricePerSeat": 42.0,
+        "hallNumber": 2,
+        "startsAt": "2026-10-03T11:00:00+03:00",
+        "pricePerSeat": 36.0,
+        "currency": "ILS",
+    },
+    {
+        "movieId": "mov_dune2",
+        "id": "shw_30102",
+        "movieTitle": "Dune: Part Two",
+        "theaterName": "Cinema Planet Beer Sheva",
+        "location": "Beer Sheva",
+        "hallNumber": 5,
+        "startsAt": "2026-10-02T20:00:00+03:00",
+        "pricePerSeat": 39.0,
+        "currency": "ILS",
+    },
+    {
+        "movieId": "mov_oppenheimer",
+        "id": "shw_50302",
+        "movieTitle": "Oppenheimer",
+        "theaterName": "Cinema Planet Beer Sheva",
+        "location": "Beer Sheva",
+        "hallNumber": 8,
+        "startsAt": "2026-10-29T19:00:00+02:00",
+        "pricePerSeat": 44.0,
         "currency": "ILS",
     },
 ]
 
+# Seat grid per showing: (row letters, seats per row). Seats are named like "A1".
+SEAT_LAYOUTS: Dict[str, Tuple[str, int]] = {
+    "shw_10293": ("ABC", 6),
+    "shw_30101": ("AB", 6),        # small VIP hall - sold out
+    "shw_20511": ("ABCDE", 10),
+    "shw_50301": ("ABCDEFG", 10),
+    "shw_10310": ("ABCDEF", 10),
+    "shw_40202": ("ABCDE", 8),
+    "shw_10294": ("ABCD", 8),
+    "shw_20530": ("ABCDEFGH", 12),  # large hall
+    "shw_60401": ("ABCD", 10),
+    "shw_40201": ("ABCD", 6),
+    "shw_30102": ("ABCDE", 8),
+    "shw_50302": ("ABCDEF", 9),
+}
+
 # Which seats are already taken, per showing.
 # SOLD: showingId -> {seat}
 # HELD: showingId -> {seat: (orderId, expiresAt)}; None/None = a permanent demo hold.
-SOLD: Dict[str, Set[str]] = {"shw_10293": {"A1", "A2", "B3"}, "shw_20511": {"C5", "C6"}}
+SOLD: Dict[str, Set[str]] = {
+    "shw_10293": {"A1", "A2", "B3"},
+    "shw_30101": {f"{r}{n}" for r in "AB" for n in range(1, 7)},
+    "shw_20511": {"C5", "C6"},
+    "shw_50301": {"D4", "D5", "D6", "D7", "E5", "E6", "G1", "G2"},
+    "shw_10310": {"D5", "D6", "E5", "E6"},
+    "shw_10294": {"B4", "B5"},
+    "shw_20530": {"F6", "F7", "F8", "E6", "E7"},
+    "shw_40201": {"B2", "B3"},
+    "shw_50302": {"C4", "C5", "C6"},
+}
 HELD: Dict[str, Dict[str, Tuple[Optional[str], Optional[datetime]]]] = {
     "shw_10293": {"A5": (None, None), "A6": (None, None)},
+    "shw_20530": {"F9": (None, None), "F10": (None, None)},
 }
-
-ROWS = "ABC"
-SEATS_PER_ROW = 6
 
 
 # ---- Helpers ----
-def seat_exists(seat: str) -> bool:
-    return len(seat) >= 2 and seat[0] in ROWS and seat[1:].isdigit() and 1 <= int(seat[1:]) <= SEATS_PER_ROW
+def seat_exists(showing_id: str, seat: str) -> bool:
+    rows, seats_per_row = SEAT_LAYOUTS[showing_id]
+    return len(seat) >= 2 and seat[0] in rows and seat[1:].isdigit() and 1 <= int(seat[1:]) <= seats_per_row
 
 
 def active_holds(showing_id: str) -> Dict[str, Tuple[Optional[str], Optional[datetime]]]:
@@ -115,8 +243,9 @@ class ShowingsImpl(BaseShowingsApi):
         held = active_holds(showingId)
 
         seats = []
-        for row in ROWS:
-            for n in range(1, SEATS_PER_ROW + 1):
+        rows, seats_per_row = SEAT_LAYOUTS[showingId]
+        for row in rows:
+            for n in range(1, seats_per_row + 1):
                 number = f"{row}{n}"
                 if number in sold:
                     status = "SOLD"
