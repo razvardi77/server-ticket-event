@@ -17,14 +17,15 @@ pip install -r requirements.txt
 $env:PYTHONPATH = "src"; uvicorn openapi_server.main:app --host 0.0.0.0 --port 8080
 ```
 
-Tests (pytest is not in requirements.txt; install it separately):
+Tests (pytest is not in requirements.txt; install it separately with `pip install pytest`). `pyproject.toml` already puts `src/` on the path, so no `PYTHONPATH` is needed:
 
 ```powershell
-$env:PYTHONPATH = "src"; python -m pytest tests
-$env:PYTHONPATH = "src"; python -m pytest tests/test_orders_api.py::test_orders_post
+python -m pytest                                              # whole suite, <1s
+python -m pytest tests/test_orders_api.py::test_confirm_order # single test
+python -m pytest -k expired                                   # by name
 ```
 
-The files in `tests/` are the generator's stubs: request code is commented out, and `test_orders_api.py` references an undefined `openapi_server` name, so it fails with NameError. Real coverage has so far been done ad hoc with `fastapi.testclient.TestClient(app)`.
+The tests are hand-written (`tests/*` is in `.openapi-generator-ignore`) and drive the app through `TestClient`. The autouse `reset_state` fixture in `conftest.py` restores the demo data and clears users and orders around every test. It restores state **in place**, because `orders_impl` imports `SOLD`/`SHOWINGS` by name, and it lowers `PBKDF2_ITERATIONS` to keep hashing fast. The `alice`/`bob`/`login` fixtures give auth headers, and `seat_status` reads the public seat map. Hold expiry is tested by setting `orders_impl.HOLD_MINUTES` to 0 instead of mocking the clock.
 
 Lint: `flake8` (max line length 88, config in `.flake8`); black/isort settings live in `pyproject.toml`.
 

@@ -27,3 +27,6 @@ src/openapi_server/security_api.py
 src/openapi_server/main.py
 src/openapi_server/apis/orders_api.py
 src/openapi_server/apis/orders_api_base.py
+
+# Hand-written tests (the generator would replace them with stubs)
+tests/*
