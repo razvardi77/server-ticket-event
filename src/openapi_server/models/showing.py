@@ -33,6 +33,7 @@ class Showing(BaseModel):
     Showing
     """ # noqa: E501
     id: Optional[StrictStr] = Field(default=None, json_schema_extra={"examples": ["shw_10293"]})
+    movie_id: Optional[StrictStr] = Field(default=None, description="Pass as the movieId filter of GET /showings to list every showing of this movie.", alias="movieId", json_schema_extra={"examples": ["mov_lotr1"]})
     movie_title: Optional[StrictStr] = Field(default=None, alias="movieTitle", json_schema_extra={"examples": ["The Fellowship of the Ring"]})
     theater_name: Optional[StrictStr] = Field(default=None, alias="theaterName", json_schema_extra={"examples": ["Cinema City Glilot"]})
     location: Optional[StrictStr] = Field(default=None, json_schema_extra={"examples": ["Glilot, Tel Aviv"]})
@@ -40,7 +41,7 @@ class Showing(BaseModel):
     starts_at: Optional[datetime] = Field(default=None, alias="startsAt")
     price_per_seat: Optional[Union[StrictFloat, StrictInt]] = Field(default=None, alias="pricePerSeat", json_schema_extra={"examples": [49.9]})
     currency: Optional[StrictStr] = Field(default=None, json_schema_extra={"examples": ["ILS"]})
-    __properties: ClassVar[List[str]] = ["id", "movieTitle", "theaterName", "location", "hallNumber", "startsAt", "pricePerSeat", "currency"]
+    __properties: ClassVar[List[str]] = ["id", "movieId", "movieTitle", "theaterName", "location", "hallNumber", "startsAt", "pricePerSeat", "currency"]
 
     model_config = {
         "populate_by_name": True,
@@ -92,6 +93,7 @@ class Showing(BaseModel):
 
         _obj = cls.model_validate({
             "id": obj.get("id"),
+            "movieId": obj.get("movieId"),
             "movieTitle": obj.get("movieTitle"),
             "theaterName": obj.get("theaterName"),
             "location": obj.get("location"),

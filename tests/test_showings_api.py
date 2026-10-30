@@ -5,7 +5,7 @@ import pytest
 from openapi_server.impl.showings_impl import HELD, SEAT_LAYOUTS, SHOWINGS, SOLD
 
 SHOWING_FIELDS = {
-    "id", "movieTitle", "theaterName", "location", "hallNumber", "startsAt", "pricePerSeat", "currency",
+    "id", "movieId", "movieTitle", "theaterName", "location", "hallNumber", "startsAt", "pricePerSeat", "currency",
 }
 
 
@@ -20,7 +20,7 @@ def test_list_all_showings(client):
     assert r.status_code == 200
     assert _ids(r) == {s["id"] for s in SHOWINGS}
     for showing in r.json():
-        assert set(showing) == SHOWING_FIELDS  # movieId is internal and never exposed
+        assert set(showing) == SHOWING_FIELDS
 
 
 @pytest.mark.parametrize(
@@ -53,6 +53,16 @@ def test_list_showings_invalid_date(client):
     assert client.get("/showings", params={"date": "02-10-2026"}).status_code == 422
 
 
+def test_movie_id_from_a_showing_filters_by_that_movie(client):
+    showing = client.get("/showings/shw_10293").json()
+
+    r = client.get("/showings", params={"movieId": showing["movieId"]})
+
+    assert r.status_code == 200
+    assert _ids(r) == {s["id"] for s in SHOWINGS if s["movieId"] == "mov_lotr1"}
+    assert {s["movieTitle"] for s in r.json()} == {"The Fellowship of the Ring"}
+
+
 # ---- GET /showings/{showingId} ----
 def test_get_showing(client):
     r = client.get("/showings/shw_10293")
@@ -60,6 +70,7 @@ def test_get_showing(client):
     assert r.status_code == 200
     assert r.json() == {
         "id": "shw_10293",
+        "movieId": "mov_lotr1",
         "movieTitle": "The Fellowship of the Ring",
         "theaterName": "Cinema City Glilot",
         "location": "Glilot, Tel Aviv",

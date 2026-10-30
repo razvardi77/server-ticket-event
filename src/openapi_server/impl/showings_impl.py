@@ -212,8 +212,7 @@ def _find_showing(showing_id: str) -> dict:
 
 
 def _to_model(s: dict) -> Showing:
-    data = {k: v for k, v in s.items() if k != "movieId"}  # movieId is internal only
-    return Showing.from_dict(data)
+    return Showing.from_dict(s)
 
 
 # ---- The implementation ----

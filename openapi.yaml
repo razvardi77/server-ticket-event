@@ -292,6 +292,7 @@ components:
     Showing:
       example:
         id: shw_10293
+        movieId: mov_lotr1
         movieTitle: The Fellowship of the Ring
         theaterName: Cinema City Glilot
         location: "Glilot, Tel Aviv"
@@ -303,6 +304,11 @@ components:
         id:
           example: shw_10293
           title: id
+          type: string
+        movieId:
+          description: Pass as the movieId filter of GET /showings to list every showing of this movie.
+          example: mov_lotr1
+          title: movieId
           type: string
         movieTitle:
           example: The Fellowship of the Ring
@@ -417,6 +423,7 @@ components:
         showingId: showingId
         showing:
           id: shw_10293
+          movieId: mov_lotr1
           movieTitle: The Fellowship of the Ring
           theaterName: Cinema City Glilot
           location: "Glilot, Tel Aviv"
