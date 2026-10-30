@@ -1,16 +1,25 @@
 import copy
+import os
+
+# Tests never touch the docker-compose Postgres: point the app at a private
+# in-memory SQLite database before openapi_server.db creates its engine.
+os.environ["DATABASE_URL"] = "sqlite://"
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from openapi_server import auth
+from openapi_server import auth, db
 from openapi_server.impl import orders_impl, showings_impl
 from openapi_server.main import app as application
 
 # Module-level demo state. orders_impl imports some of these by name, so they are
 # restored in place (never rebound) to keep every reference pointing at the same object.
 _SHOWINGS_STATE = ("SHOWINGS", "SEAT_LAYOUTS", "SOLD", "HELD")
+
+# Alembic manages the real schema; for the throwaway test database the ORM
+# metadata is enough.
+db.Base.metadata.create_all(db.engine)
 
 
 @pytest.fixture(autouse=True)

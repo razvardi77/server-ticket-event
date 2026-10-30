@@ -27,4 +27,6 @@ RUN pytest tests
 FROM python:3.10 AS service
 WORKDIR /root/app/site-packages
 COPY --from=builder /venv /venv
+COPY --from=builder /usr/src/app/alembic.ini alembic.ini
+COPY --from=builder /usr/src/app/alembic alembic
 ENV PATH=/venv/bin:$PATH
