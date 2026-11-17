@@ -4,7 +4,7 @@
 # The generated files (showings_api.py, showings_api_base.py) stay untouched:
 # showings_api.py automatically finds this class because it lives in the impl folder.
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Dict, List, Optional, Set, Tuple
 
 from openapi_server.apis.showings_api_base import BaseShowingsApi
@@ -15,7 +15,34 @@ from openapi_server.models.showing import Showing
 
 # ---- Demo data (later this will come from a database) ----
 # Two chains: Cinema City and Cinema Planet (formerly Yes Planet).
-# Times are Israel local time: +03:00 until DST ends on 2026-10-25, +02:00 after.
+# Times are Israel local time. The dates are relative to the day the server starts
+# (day 0 is tomorrow), so the demo showings always lie in the future.
+def _last_sunday(year: int, month: int) -> date:
+    last = date(year, month + 1, 1) - timedelta(days=1)  # only used for March/October
+    return last - timedelta(days=(last.weekday() + 1) % 7)
+
+
+def _israel_offset(day: date, hour: int) -> timedelta:
+    """Israel's UTC offset: +03:00 (IDT) from 02:00 on the Friday before the last Sunday
+    of March until 02:00 on the last Sunday of October, +02:00 (IST) otherwise."""
+    dst_start = (_last_sunday(day.year, 3) - timedelta(days=2), 2)
+    dst_end = (_last_sunday(day.year, 10), 2)
+    return timedelta(hours=3 if dst_start <= (day, hour) < dst_end else 2)
+
+
+# Being an hour off around midnight during DST only moves the demo week by one day.
+_TODAY_IL = (datetime.now(timezone.utc) + timedelta(hours=2)).date()
+DEMO_DAY_0 = _TODAY_IL + timedelta(days=1)
+
+
+def _starts_at(days: int, hhmm: str) -> str:
+    """ISO 8601 start time `days` after DEMO_DAY_0 at `hhmm` Israel local time."""
+    day = DEMO_DAY_0 + timedelta(days=days)
+    t = time.fromisoformat(hhmm)
+    tz = timezone(_israel_offset(day, t.hour))
+    return datetime.combine(day, t, tz).isoformat()
+
+
 SHOWINGS = [
     # ---- Cinema City ----
     {
@@ -25,7 +52,7 @@ SHOWINGS = [
         "theaterName": "Cinema City Glilot",
         "location": "Glilot, Tel Aviv",
         "hallNumber": 7,
-        "startsAt": "2026-10-02T20:30:00+03:00",
+        "startsAt": _starts_at(0, "20:30"),
         "pricePerSeat": 49.9,
         "currency": "ILS",
     },
@@ -36,7 +63,7 @@ SHOWINGS = [
         "theaterName": "Cinema City Glilot",
         "location": "Glilot, Tel Aviv",
         "hallNumber": 11,
-        "startsAt": "2026-10-06T22:00:00+03:00",
+        "startsAt": _starts_at(4, "22:00"),
         "pricePerSeat": 72.0,
         "currency": "ILS",
     },
@@ -47,7 +74,7 @@ SHOWINGS = [
         "theaterName": "Cinema City Jerusalem",
         "location": "Jerusalem",
         "hallNumber": 1,
-        "startsAt": "2026-10-02T21:00:00+03:00",
+        "startsAt": _starts_at(0, "21:00"),
         "pricePerSeat": 42.0,
         "currency": "ILS",
     },
@@ -58,7 +85,7 @@ SHOWINGS = [
         "theaterName": "Cinema City Jerusalem",
         "location": "Jerusalem",
         "hallNumber": 9,
-        "startsAt": "2026-10-08T20:15:00+03:00",
+        "startsAt": _starts_at(6, "20:15"),
         "pricePerSeat": 52.0,
         "currency": "ILS",
     },
@@ -69,7 +96,7 @@ SHOWINGS = [
         "theaterName": "Cinema City Rishon LeZion",
         "location": "Rishon LeZion",
         "hallNumber": 4,
-        "startsAt": "2026-10-04T19:45:00+03:00",
+        "startsAt": _starts_at(2, "19:45"),
         "pricePerSeat": 47.0,
         "currency": "ILS",
     },
@@ -80,7 +107,7 @@ SHOWINGS = [
         "theaterName": "Cinema City Rishon LeZion",
         "location": "Rishon LeZion",
         "hallNumber": 6,
-        "startsAt": "2026-10-10T16:30:00+03:00",
+        "startsAt": _starts_at(8, "16:30"),
         "pricePerSeat": 38.5,
         "currency": "ILS",
     },
@@ -92,7 +119,7 @@ SHOWINGS = [
         "theaterName": "Cinema Planet Haifa",
         "location": "Haifa",
         "hallNumber": 3,
-        "startsAt": "2026-10-03T18:00:00+03:00",
+        "startsAt": _starts_at(1, "18:00"),
         "pricePerSeat": 45.0,
         "currency": "ILS",
     },
@@ -103,7 +130,7 @@ SHOWINGS = [
         "theaterName": "Cinema Planet Rishonim",
         "location": "Rishonim, Rishon LeZion",
         "hallNumber": 12,
-        "startsAt": "2026-10-05T21:30:00+03:00",
+        "startsAt": _starts_at(3, "21:30"),
         "pricePerSeat": 64.0,
         "currency": "ILS",
     },
@@ -114,7 +141,7 @@ SHOWINGS = [
         "theaterName": "Cinema Planet Rishonim",
         "location": "Rishonim, Rishon LeZion",
         "hallNumber": 3,
-        "startsAt": "2026-11-05T21:00:00+02:00",
+        "startsAt": _starts_at(34, "21:00"),
         "pricePerSeat": 46.0,
         "currency": "ILS",
     },
@@ -125,7 +152,7 @@ SHOWINGS = [
         "theaterName": "Cinema Planet Jerusalem",
         "location": "Jerusalem",
         "hallNumber": 2,
-        "startsAt": "2026-10-03T11:00:00+03:00",
+        "startsAt": _starts_at(1, "11:00"),
         "pricePerSeat": 36.0,
         "currency": "ILS",
     },
@@ -136,7 +163,7 @@ SHOWINGS = [
         "theaterName": "Cinema Planet Beer Sheva",
         "location": "Beer Sheva",
         "hallNumber": 5,
-        "startsAt": "2026-10-02T20:00:00+03:00",
+        "startsAt": _starts_at(0, "20:00"),
         "pricePerSeat": 39.0,
         "currency": "ILS",
     },
@@ -147,7 +174,7 @@ SHOWINGS = [
         "theaterName": "Cinema Planet Beer Sheva",
         "location": "Beer Sheva",
         "hallNumber": 8,
-        "startsAt": "2026-10-29T19:00:00+02:00",
+        "startsAt": _starts_at(27, "19:00"),
         "pricePerSeat": 44.0,
         "currency": "ILS",
     },
