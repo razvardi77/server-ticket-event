@@ -4,6 +4,7 @@
 # The generated files (showings_api.py, showings_api_base.py) stay untouched:
 # showings_api.py automatically finds this class because it lives in the impl folder.
 
+import threading
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -210,6 +211,12 @@ SOLD: Dict[str, Set[str]] = {
     "shw_40201": {"B2", "B3"},
     "shw_50302": {"C4", "C5", "C6"},
 }
+# Every read-check-write on SOLD, HELD or an order happens while holding this lock, so
+# two requests for the same seats can never both pass the availability check. It is
+# re-entrant because helpers like active_holds() also take it. It only protects one
+# process: running several workers needs a shared store (e.g. Postgres row locks).
+BOOKING_LOCK = threading.RLock()
+
 HELD: Dict[str, Dict[str, Tuple[Optional[str], Optional[datetime]]]] = {
     "shw_10293": {"A5": (None, None), "A6": (None, None)},
     "shw_20530": {"F9": (None, None), "F10": (None, None)},
@@ -224,11 +231,13 @@ def seat_exists(showing_id: str, seat: str) -> bool:
 
 def active_holds(showing_id: str) -> Dict[str, Tuple[Optional[str], Optional[datetime]]]:
     """HELD for one showing, after dropping holds whose time has run out."""
-    holds = HELD.setdefault(showing_id, {})
-    now = datetime.now(timezone.utc)
-    for seat in [s for s, (_, exp) in holds.items() if exp is not None and exp <= now]:
-        del holds[seat]
-    return holds
+    with BOOKING_LOCK:
+        holds = HELD.setdefault(showing_id, {})
+        now = datetime.now(timezone.utc)
+        expired = [s for s, (_, exp) in holds.items() if exp is not None and exp <= now]
+        for seat in expired:
+            del holds[seat]
+        return holds
 
 
 def _find_showing(showing_id: str) -> dict:
@@ -266,8 +275,9 @@ class ShowingsImpl(BaseShowingsApi):
     async def showings_showing_id_seats_get(self, showingId: str) -> List[Seat]:
         """GET /showings/{showingId}/seats - seat map, or 404."""
         _find_showing(showingId)  # raises 404 if it doesn't exist
-        sold = SOLD.get(showingId, set())
-        held = active_holds(showingId)
+        with BOOKING_LOCK:
+            sold = set(SOLD.get(showingId, set()))
+            held = dict(active_holds(showingId))
 
         seats = []
         rows, seats_per_row = SEAT_LAYOUTS[showingId]

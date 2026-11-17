@@ -6,11 +6,16 @@
 # Lifecycle: PENDING (seats held) -> CONFIRMED (seats sold)
 #                                 -> CANCELLED (DELETE, seats released)
 #                                 -> EXPIRED (hold ran out, seats released - no request needed)
-# A CONFIRMED order can still be cancelled (refund) until the showing starts.
+# Any order can be cancelled (a CONFIRMED one is refunded) only until
+# CANCEL_CUTOFF_HOURS before the showing starts.
+#
+# Every handler runs under BOOKING_LOCK, so concurrent requests for the same seats are
+# serialised: the first one holds them and the rest get 409 SEATS_UNAVAILABLE.
 
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from typing import Dict, List
 
 from pydantic import validate_email
@@ -19,6 +24,7 @@ from pydantic_core import PydanticCustomError
 from openapi_server.apis.orders_api_base import BaseOrdersApi
 from openapi_server.errors import ApiError
 from openapi_server.impl.showings_impl import (
+    BOOKING_LOCK,
     SHOWINGS,
     SOLD,
     _to_model,
@@ -30,6 +36,8 @@ from openapi_server.models.order_create_request import OrderCreateRequest
 from openapi_server.models.order_patch_request import OrderPatchRequest
 
 HOLD_MINUTES = int(os.environ.get("ORDER_HOLD_MINUTES", "10"))
+# Cancelling (and refunding) closes this long before the showing starts.
+CANCEL_CUTOFF_HOURS = float(os.environ.get("CANCEL_CUTOFF_HOURS", "3"))
 
 # Demo payment gateway: this token is declined, like Stripe's test token of the same name.
 DECLINED_TOKEN = "tok_chargeDeclined"
@@ -102,9 +110,21 @@ def _require_pending(order: Order) -> None:
         raise ApiError(409, "ORDER_NOT_PENDING", f"Order is {order.status}, not PENDING.")
 
 
+def _locked(handler):
+    """Run the whole handler under BOOKING_LOCK. Handlers must not await inside it."""
+
+    @wraps(handler)
+    async def wrapper(*args, **kwargs):
+        with BOOKING_LOCK:
+            return await handler(*args, **kwargs)
+
+    return wrapper
+
+
 # ---- The implementation ----
 class OrdersImpl(BaseOrdersApi):
 
+    @_locked
     async def orders_post(self, order_create_request: OrderCreateRequest, username: str) -> Order:
         """POST /orders - create a PENDING order and hold its seats."""
         req = order_create_request
@@ -129,10 +149,12 @@ class OrdersImpl(BaseOrdersApi):
         ORDERS[order.id] = {"owner": username, "order": order}
         return order
 
+    @_locked
     async def orders_order_id_get(self, orderId: str, username: str) -> Order:
         """GET /orders/{orderId}"""
         return _load(orderId, username)
 
+    @_locked
     async def orders_order_id_patch(
         self, orderId: str, order_patch_request: OrderPatchRequest, username: str
     ) -> Order:
@@ -163,6 +185,7 @@ class OrdersImpl(BaseOrdersApi):
             order.payment_token = req.payment_token
         return order
 
+    @_locked
     async def orders_order_id_confirm_post(self, orderId: str, username: str) -> Order:
         """POST /orders/{orderId}/confirm - charge the payment token and sell the seats."""
         order = _load(orderId, username)
@@ -189,18 +212,32 @@ class OrdersImpl(BaseOrdersApi):
         order.status = "CONFIRMED"
         return order
 
+    @_locked
     async def orders_order_id_delete(self, orderId: str, username: str) -> None:
         """DELETE /orders/{orderId} - cancel; refunds a CONFIRMED order."""
         order = _load(orderId, username)
+        if order.status not in ("PENDING", "CONFIRMED"):
+            raise ApiError(
+                409, "ORDER_NOT_CANCELLABLE", f"Order is already {order.status}."
+            )
+
+        starts_at = order.showing.starts_at
+        if starts_at <= _now():
+            raise ApiError(
+                409, "ORDER_NOT_CANCELLABLE", "The showing has already started."
+            )
+        if starts_at - _now() < timedelta(hours=CANCEL_CUTOFF_HOURS):
+            raise ApiError(
+                409,
+                "CANCELLATION_WINDOW_CLOSED",
+                f"Orders can't be cancelled less than {CANCEL_CUTOFF_HOURS:g} hours "
+                "before the showing starts.",
+            )
 
         if order.status == "PENDING":
             _release(order, order.seats)
-        elif order.status == "CONFIRMED":
-            if order.showing.starts_at <= _now():
-                raise ApiError(409, "ORDER_NOT_CANCELLABLE", "The showing has already started.")
+        else:
             SOLD.get(order.showing_id, set()).difference_update(order.seats)
             # Stand-in for the payment gateway refund call.
-        else:
-            raise ApiError(409, "ORDER_NOT_CANCELLABLE", f"Order is already {order.status}.")
 
         order.status = "CANCELLED"

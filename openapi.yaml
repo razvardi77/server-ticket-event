@@ -141,6 +141,7 @@ paths:
     delete:
       description: |
         A deliberate cancellation by the user. Releases the seats and triggers a refund if the order was already paid. This is NOT the same as a hold that simply expired.
+        Cancelling closes 3 hours before the showing starts (409 `CANCELLATION_WINDOW_CLOSED`); after the showing has started it is 409 `ORDER_NOT_CANCELLABLE`.
       parameters:
       - explode: false
         in: path
@@ -159,7 +160,12 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Resource not found
         "409":
-          description: Order can no longer be cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: "Order can no longer be cancelled: already cancelled or expired,\
+            \ less than 3 hours before the showing, or the showing has started"
       security:
       - bearerAuth: []
       summary: Cancel an order
