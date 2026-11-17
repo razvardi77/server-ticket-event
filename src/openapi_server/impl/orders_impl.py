@@ -6,8 +6,11 @@
 # Lifecycle: PENDING (seats held) -> CONFIRMED (seats sold)
 #                                 -> CANCELLED (DELETE, seats released)
 #                                 -> EXPIRED (hold ran out, seats released - no request needed)
-# Any order can be cancelled (a CONFIRMED one is refunded) only until
-# CANCEL_CUTOFF_HOURS before the showing starts.
+# Any order can be cancelled (a CONFIRMED one is refunded) until CANCEL_CUTOFF_HOURS
+# before its showing starts. From then until the showing ends, its orders are locked
+# (423 ORDER_LOCKED). The lock belongs to that one showing, so other showings of the
+# same movie are unaffected. Once the showing has ended the lock is gone and the
+# order is simply over: DELETE is 409 ORDER_NOT_CANCELLABLE.
 #
 # Every handler runs under BOOKING_LOCK, so concurrent requests for the same seats are
 # serialised: the first one holds them and the rest get 409 SEATS_UNAVAILABLE.
@@ -30,13 +33,14 @@ from openapi_server.impl.showings_impl import (
     _to_model,
     active_holds,
     seat_exists,
+    showing_ends_at,
 )
 from openapi_server.models.order import Order
 from openapi_server.models.order_create_request import OrderCreateRequest
 from openapi_server.models.order_patch_request import OrderPatchRequest
 
 HOLD_MINUTES = int(os.environ.get("ORDER_HOLD_MINUTES", "10"))
-# Cancelling (and refunding) closes this long before the showing starts.
+# Cancelling (and refunding) locks this long before the showing starts.
 CANCEL_CUTOFF_HOURS = float(os.environ.get("CANCEL_CUTOFF_HOURS", "3"))
 
 # Demo payment gateway: this token is declined, like Stripe's test token of the same name.
@@ -221,17 +225,17 @@ class OrdersImpl(BaseOrdersApi):
                 409, "ORDER_NOT_CANCELLABLE", f"Order is already {order.status}."
             )
 
+        now = _now()
         starts_at = order.showing.starts_at
-        if starts_at <= _now():
+        ends_at = showing_ends_at(order.showing_id, starts_at)
+        if now >= ends_at:
+            raise ApiError(409, "ORDER_NOT_CANCELLABLE", "The showing has ended.")
+        if now >= starts_at - timedelta(hours=CANCEL_CUTOFF_HOURS):
             raise ApiError(
-                409, "ORDER_NOT_CANCELLABLE", "The showing has already started."
-            )
-        if starts_at - _now() < timedelta(hours=CANCEL_CUTOFF_HOURS):
-            raise ApiError(
-                409,
-                "CANCELLATION_WINDOW_CLOSED",
-                f"Orders can't be cancelled less than {CANCEL_CUTOFF_HOURS:g} hours "
-                "before the showing starts.",
+                423,
+                "ORDER_LOCKED",
+                f"Orders for this showing are locked from {CANCEL_CUTOFF_HOURS:g} "
+                f"hours before it starts until it ends at {ends_at.isoformat()}.",
             )
 
         if order.status == "PENDING":

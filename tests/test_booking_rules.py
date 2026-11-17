@@ -276,9 +276,33 @@ def test_seats_freed_by_cancel_can_be_rebooked(client, alice, bob, order_for):
     )
 
 
-# ---- 3. Cancellation cutoff ----
+# ---- 3. Cancellation lock (423 ORDER_LOCKED) ----
+# shw_40202 and shw_40201 are both Spirited Away (125 min), at different times.
+SPIRITED_RUNTIME = timedelta(minutes=125)
+OTHER_SPIRITED = "shw_40201"
+LOCKED_PREFIX = (
+    "Orders for this showing are locked from 3 hours before it starts until it ends at "
+)
+
+
+def _set_order_start(order_id: str, delta: timedelta) -> datetime:
+    """Pretend the order's showing starts `delta` from now (negative = in the past)."""
+    start = datetime.now(timezone.utc) + delta
+    orders_impl.ORDERS[order_id]["order"].showing.starts_at = start
+    return start
+
+
+def _assert_locked(r, starts_at: datetime):
+    assert r.status_code == 423
+    body = r.json()
+    assert body["code"] == "ORDER_LOCKED"
+    assert body["message"].startswith(LOCKED_PREFIX)
+    ends_at = datetime.fromisoformat(body["message"].removeprefix(LOCKED_PREFIX)[:-1])
+    assert ends_at == starts_at + SPIRITED_RUNTIME
+
+
 @pytest.mark.parametrize("confirm", [False, True], ids=["pending", "confirmed"])
-def test_cancel_blocked_less_than_three_hours_before(
+def test_cancel_locked_less_than_three_hours_before(
     client, alice, order_for, seat_status, confirm
 ):
     _move_showing(FREE_SHOWING, timedelta(hours=2, minutes=59))
@@ -286,16 +310,10 @@ def test_cancel_blocked_less_than_three_hours_before(
 
     r = client.delete(f"/orders/{order['id']}", headers=alice)
 
-    assert r.status_code == 409
-    assert r.json() == {
-        "code": "CANCELLATION_WINDOW_CLOSED",
-        "message": "Orders can't be cancelled less than 3 hours "
-        "before the showing starts.",
-    }
+    _assert_locked(r, datetime.fromisoformat(order["showing"]["startsAt"]))
     # Nothing changed: the order keeps its status and its seats.
-    assert (
-        client.get(f"/orders/{order['id']}", headers=alice).json()["status"]
-        == order["status"]
+    assert client.get(f"/orders/{order['id']}", headers=alice).json()["status"] == (
+        order["status"]
     )
     assert seat_status(FREE_SHOWING, "A3") == ("SOLD" if confirm else "HELD")
 
@@ -310,33 +328,102 @@ def test_cancel_allowed_more_than_three_hours_before(
     r = client.delete(f"/orders/{order['id']}", headers=alice)
 
     assert r.status_code == 204
-    assert (
-        client.get(f"/orders/{order['id']}", headers=alice).json()["status"]
-        == "CANCELLED"
+    assert client.get(f"/orders/{order['id']}", headers=alice).json()["status"] == (
+        "CANCELLED"
     )
     assert seat_status(FREE_SHOWING, "A3") == "AVAILABLE"
 
 
 @pytest.mark.parametrize(
-    "starts_in, status",
+    "starts_in, status, code",
     [
-        (timedelta(hours=3, seconds=-5), 409),
-        (timedelta(hours=3, seconds=5), 204),
+        (timedelta(hours=3, seconds=5), 204, None),  # lock not yet on
+        (timedelta(hours=3, seconds=-5), 423, "ORDER_LOCKED"),  # lock starts
+        (timedelta(seconds=5), 423, "ORDER_LOCKED"),  # about to start
+        (timedelta(minutes=-60), 423, "ORDER_LOCKED"),  # playing right now
+        (-SPIRITED_RUNTIME + timedelta(seconds=5), 423, "ORDER_LOCKED"),  # last moment
+        (
+            -SPIRITED_RUNTIME - timedelta(seconds=5),
+            409,
+            "ORDER_NOT_CANCELLABLE",
+        ),  # ended
     ],
-    ids=["just-inside", "just-outside"],
+    ids=["before-lock", "lock-starts", "about-to-start", "playing", "ending", "ended"],
 )
-def test_cancel_cutoff_boundary(client, alice, order_for, starts_in, status):
-    _move_showing(FREE_SHOWING, starts_in)
+def test_lock_window_runs_from_cutoff_until_showing_ends(
+    client, alice, order_for, seat_status, starts_in, status, code
+):
+    order = order_for(alice, seats=["A3"], confirm=True)
+    _set_order_start(order["id"], starts_in)
+
+    r = client.delete(f"/orders/{order['id']}", headers=alice)
+
+    assert r.status_code == status
+    if code:
+        assert r.json()["code"] == code
+        assert seat_status(FREE_SHOWING, "A3") == "SOLD"
+
+
+def test_after_the_showing_ends_the_lock_is_released(client, alice, order_for):
+    """Once the showing is over it is no longer locked; the order is simply finished."""
     order = order_for(alice, confirm=True)
+    _set_order_start(order["id"], -SPIRITED_RUNTIME - timedelta(minutes=1))
 
-    assert client.delete(f"/orders/{order['id']}", headers=alice).status_code == status
+    r = client.delete(f"/orders/{order['id']}", headers=alice)
+
+    assert r.status_code == 409
+    assert r.json() == {
+        "code": "ORDER_NOT_CANCELLABLE",
+        "message": "The showing has ended.",
+    }
 
 
-def test_cancel_after_showing_started_is_not_cancellable(client, alice, order_for):
+def test_lock_is_per_showing_not_per_movie(client, alice, order_for, seat_status):
+    """Locking one Spirited Away showing leaves the other one cancellable."""
+    _move_showing(FREE_SHOWING, timedelta(hours=1))
+    locked = order_for(alice, seats=["B1"], confirm=True)
+    other = order_for(alice, seats=["B1"], showing_id=OTHER_SPIRITED, confirm=True)
+
+    _assert_locked(
+        client.delete(f"/orders/{locked['id']}", headers=alice),
+        datetime.fromisoformat(locked["showing"]["startsAt"]),
+    )
+    assert client.delete(f"/orders/{other['id']}", headers=alice).status_code == 204
+    assert seat_status(FREE_SHOWING, "B1") == "SOLD"
+    assert seat_status(OTHER_SPIRITED, "B1") == "AVAILABLE"
+
+
+def test_later_showing_of_the_same_movie_is_a_fresh_session(client, alice, order_for):
+    """One showing has ended, one is playing (locked), one is tomorrow (open)."""
+    ended = order_for(alice, seats=["C1"], confirm=True)
+    playing = order_for(alice, seats=["C2"], confirm=True)
+    later = order_for(alice, seats=["C1"], showing_id=OTHER_SPIRITED, confirm=True)
+    _set_order_start(ended["id"], -SPIRITED_RUNTIME - timedelta(minutes=1))
+    start = _set_order_start(playing["id"], timedelta(minutes=-30))
+
+    assert client.delete(f"/orders/{ended['id']}", headers=alice).status_code == 409
+    _assert_locked(client.delete(f"/orders/{playing['id']}", headers=alice), start)
+    assert client.delete(f"/orders/{later['id']}", headers=alice).status_code == 204
+
+
+def test_lock_ends_at_uses_each_movies_runtime(client, alice, order_for):
+    """shw_20530 is Interstellar (169 min): locked at 168 min in, over at 170."""
+    order = order_for(alice, seats=["A1"], showing_id="shw_20530", confirm=True)
+    _set_order_start(order["id"], -timedelta(minutes=168))
+    assert client.delete(f"/orders/{order['id']}", headers=alice).status_code == 423
+
+    _set_order_start(order["id"], -timedelta(minutes=170))
+    assert client.delete(f"/orders/{order['id']}", headers=alice).status_code == 409
+
+
+def test_every_demo_movie_has_a_runtime():
+    assert {s["movieId"] for s in SHOWINGS} <= set(showings_impl.RUNTIME_MINUTES)
+
+
+def test_already_cancelled_order_is_409_even_inside_the_lock(client, alice, order_for):
     order = order_for(alice, confirm=True)
-    orders_impl.ORDERS[order["id"]]["order"].showing.starts_at = datetime.now(
-        timezone.utc
-    ) - timedelta(minutes=1)
+    assert client.delete(f"/orders/{order['id']}", headers=alice).status_code == 204
+    _set_order_start(order["id"], timedelta(hours=1))
 
     r = client.delete(f"/orders/{order['id']}", headers=alice)
 
@@ -344,7 +431,7 @@ def test_cancel_after_showing_started_is_not_cancellable(client, alice, order_fo
     assert r.json()["code"] == "ORDER_NOT_CANCELLABLE"
 
 
-def test_cancel_cutoff_is_configurable(client, alice, order_for, monkeypatch):
+def test_lock_cutoff_is_configurable(client, alice, order_for, monkeypatch):
     monkeypatch.setattr(orders_impl, "CANCEL_CUTOFF_HOURS", 1)
     _move_showing(FREE_SHOWING, timedelta(hours=2))
     order = order_for(alice, confirm=True)
@@ -352,19 +439,29 @@ def test_cancel_cutoff_is_configurable(client, alice, order_for, monkeypatch):
     assert client.delete(f"/orders/{order['id']}", headers=alice).status_code == 204
 
 
-def test_other_actions_still_work_inside_the_cutoff(client, alice, order_for):
-    """The cutoff only blocks cancelling: booking, editing and paying stay open."""
+def test_other_actions_still_work_inside_the_lock(client, alice, order_for):
+    """The lock only blocks cancelling: booking, editing and paying stay open."""
     _move_showing(FREE_SHOWING, timedelta(hours=1))
     order = order_for(alice, seats=["B1"])
 
-    assert (
-        client.patch(
-            f"/orders/{order['id']}", headers=alice, json={"seats": ["B2"]}
-        ).status_code
-        == 200
-    )
+    r = client.patch(f"/orders/{order['id']}", headers=alice, json={"seats": ["B2"]})
+    assert r.status_code == 200
     order = order_for(alice, seats=["B3"], confirm=True)
     assert order["status"] == "CONFIRMED"
+
+
+def test_concurrent_cancels_inside_the_lock_all_get_423(
+    client, alice, order_for, seat_status
+):
+    _move_showing(FREE_SHOWING, timedelta(hours=1))
+    order = order_for(alice, seats=["B4"], confirm=True)
+
+    responses = _race(
+        6, lambda i: client.delete(f"/orders/{order['id']}", headers=alice)
+    )
+
+    assert [r.status_code for r in responses] == [423] * 6
+    assert seat_status(FREE_SHOWING, "B4") == "SOLD"
 
 
 # ---- Authorization ----
@@ -423,10 +520,10 @@ def test_booking_and_cancelling_require_a_valid_token(
     assert r.json()["code"] == code
 
 
-def test_other_user_cannot_cancel_even_inside_the_cutoff(
+def test_other_user_cannot_cancel_even_inside_the_lock(
     client, alice, bob, order_for, seat_status
 ):
-    """Ownership is checked first: bob gets 404 and learns nothing about the cutoff."""
+    """Ownership is checked first: bob gets 404, not 423, and learns nothing."""
     _move_showing(FREE_SHOWING, timedelta(hours=1))
     order = order_for(alice, seats=["A6"], confirm=True)
 

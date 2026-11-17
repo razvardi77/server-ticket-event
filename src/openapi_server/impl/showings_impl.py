@@ -181,6 +181,25 @@ SHOWINGS = [
     },
 ]
 
+# Running time per movie, used to work out when a showing ends. Internal only: the API
+# exposes startsAt but no end time. Every movieId in SHOWINGS needs an entry.
+RUNTIME_MINUTES: Dict[str, int] = {
+    "mov_lotr1": 178,
+    "mov_lotr2": 179,
+    "mov_dune2": 166,
+    "mov_interstellar": 169,
+    "mov_oppenheimer": 180,
+    "mov_spirited": 125,
+    "mov_inception": 148,
+}
+
+
+def showing_ends_at(showing_id: str, starts_at: datetime) -> datetime:
+    """When this showing ends: its start time plus its movie's running time."""
+    movie_id = next(s["movieId"] for s in SHOWINGS if s["id"] == showing_id)
+    return starts_at + timedelta(minutes=RUNTIME_MINUTES[movie_id])
+
+
 # Seat grid per showing: (row letters, seats per row). Seats are named like "A1".
 SEAT_LAYOUTS: Dict[str, Tuple[str, int]] = {
     "shw_10293": ("ABC", 6),

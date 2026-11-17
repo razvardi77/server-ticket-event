@@ -283,12 +283,13 @@ def test_cancel_confirmed_order_releases_sold_seats(client, alice, confirmed_ord
 
 
 def test_cancel_confirmed_order_after_showing_started(client, alice, confirmed_order, seat_status):
+    """A showing that is playing is still inside its cancellation lock."""
     order = orders_impl.ORDERS[confirmed_order["id"]]["order"]
     order.showing.starts_at = datetime.now(timezone.utc) - timedelta(minutes=5)
     r = client.delete(f"/orders/{confirmed_order['id']}", headers=alice)
 
-    assert r.status_code == 409
-    assert r.json()["code"] == "ORDER_NOT_CANCELLABLE"
+    assert r.status_code == 423
+    assert r.json()["code"] == "ORDER_LOCKED"
     assert seat_status(FREE_SHOWING, confirmed_order["seats"][0]) == "SOLD"
 
 
