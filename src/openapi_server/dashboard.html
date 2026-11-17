@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ticket Monitor</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --panel-2: #1c222b; --line: #2a313c;
+    --text: #e6edf3; --muted: #8b949e; --faint: #5b6573;
+    --sold: #5b8def; --held: #c79a3b; --free: #2b333e; --orphan: #f0506e;
+    --ok: #3fb950; --fail: #f85149; --conflict: #e3a008; --locked: #a371f7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 5;
+  }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  .conn { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  .conn i { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .conn.live i { background: var(--ok); box-shadow: 0 0 0 3px rgba(63,185,80,.18); }
+  .conn.down i { background: var(--fail); }
+  .spacer { flex: 1; }
+  .updated { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+  .kpis {
+    display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px;
+    background: var(--line); border-bottom: 1px solid var(--line);
+  }
+  .kpi { background: var(--panel); padding: 12px 20px; }
+  .kpi b { display: block; font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .kpi span { color: var(--muted); font-size: 12px; }
+  .kpi.alert b { color: var(--fail); }
+  .kpi.warn b { color: var(--conflict); }
+  .kpi.orph b { color: var(--orphan); }
+  .kpi.bump { animation: bump .6s ease-out; }
+  @keyframes bump { from { background: #2a1d1d; } to { background: var(--panel); } }
+
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 380px; min-height: calc(100vh - 140px); }
+  .shows { padding: 16px 20px; display: grid; gap: 12px;
+           grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); align-content: start; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .card.flash-fail { animation: flashFail 1.6s ease-out; }
+  .card.flash-conflict { animation: flashConflict 1.6s ease-out; }
+  @keyframes flashFail { 0% { border-color: var(--fail); box-shadow: 0 0 0 3px rgba(248,81,73,.35); } 100% { border-color: var(--line); box-shadow: none; } }
+  @keyframes flashConflict { 0% { border-color: var(--conflict); box-shadow: 0 0 0 3px rgba(227,160,8,.35); } 100% { border-color: var(--line); box-shadow: none; } }
+  .card h2 { font-size: 14px; margin: 0; font-weight: 600; }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .row1 { display: flex; justify-content: space-between; gap: 8px; align-items: start; }
+  .badge { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--line);
+           color: var(--muted); white-space: nowrap; }
+  .badge.locked { color: var(--locked); border-color: rgba(163,113,247,.5); }
+  .badge.playing { color: var(--held); border-color: rgba(199,154,59,.5); }
+  .badge.ended { color: var(--faint); }
+  .bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--free); margin: 10px 0 4px; }
+  .bar .s { background: var(--sold); } .bar .h { background: var(--held); }
+  .bar div { transition: width .4s ease; }
+  .stats { display: flex; gap: 12px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .stats b { color: var(--text); font-weight: 600; }
+  .stats .o b { color: var(--orphan); }
+  .grid { margin-top: 10px; display: grid; gap: 3px; }
+  .grow { display: flex; gap: 3px; align-items: center; }
+  .grow > em { width: 12px; font-style: normal; font-size: 10px; color: var(--faint); }
+  .seat { width: 14px; height: 12px; border-radius: 2px 2px 4px 4px; background: var(--free); transition: background .3s; }
+  .seat.SOLD { background: var(--sold); }
+  .seat.HELD { background: var(--held); }
+  .seat.orphan { background: transparent; box-shadow: inset 0 0 0 2px var(--orphan); }
+  .orphans { margin-top: 8px; font-size: 12px; color: var(--orphan); }
+
+  aside { border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  .feedhead { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .feedhead h3 { margin: 0; font-size: 13px; font-weight: 600; flex: 1; }
+  .filters button {
+    background: transparent; color: var(--muted); border: 1px solid var(--line);
+    border-radius: 12px; padding: 2px 9px; font-size: 12px; cursor: pointer;
+  }
+  .filters button.on { color: var(--text); background: var(--panel-2); border-color: var(--faint); }
+  .feed { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; max-height: calc(100vh - 190px); }
+  .ev { padding: 8px 14px; border-bottom: 1px solid var(--line); border-left: 3px solid transparent; font-size: 12px; }
+  .ev.fail { border-left-color: var(--fail); background: rgba(248,81,73,.06); }
+  .ev.conflict { border-left-color: var(--conflict); background: rgba(227,160,8,.08); }
+  .ev.new { animation: slideIn .5s ease-out; }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+  .ev .top { display: flex; gap: 8px; align-items: baseline; }
+  .ev .st { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .ev.ok .st { color: var(--ok); } .ev.fail .st { color: var(--fail); } .ev.conflict .st { color: var(--conflict); }
+  .ev .act { font-weight: 600; }
+  .ev .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+  .ev .t { margin-left: auto; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .ev .msg { color: var(--muted); margin-top: 2px; }
+  .empty { color: var(--faint); padding: 24px 14px; text-align: center; }
+  .legend { display: flex; gap: 14px; padding: 10px 20px 0; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .legend .seat { display: inline-block; }
+
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; }
+    aside { border-left: 0; border-top: 1px solid var(--line); }
+    .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .feed { max-height: 60vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ticket Monitor</h1>
+  <span class="conn" id="conn"><i></i><span>connecting…</span></span>
+  <span class="spacer"></span>
+  <span class="updated" id="updated"></span>
+</header>
+
+<section class="kpis">
+  <div class="kpi" id="k-occ"><b>–</b><span>occupancy (sold + held)</span></div>
+  <div class="kpi" id="k-sold"><b>–</b><span>seats sold</span></div>
+  <div class="kpi" id="k-held"><b>–</b><span>seats on hold</span></div>
+  <div class="kpi alert" id="k-fail"><b>–</b><span>failed bookings</span></div>
+  <div class="kpi warn" id="k-409"><b>–</b><span>409 conflicts</span></div>
+  <div class="kpi orph" id="k-orph"><b>–</b><span>orphan seats</span></div>
+</section>
+
+<main>
+  <div>
+    <div class="legend">
+      <span><i class="seat SOLD"></i>sold</span>
+      <span><i class="seat HELD"></i>held</span>
+      <span><i class="seat"></i>free</span>
+      <span><i class="seat orphan"></i>orphan (single free seat boxed in)</span>
+    </div>
+    <section class="shows" id="shows"></section>
+  </div>
+  <aside>
+    <div class="feedhead">
+      <h3>Live activity</h3>
+      <div class="filters" id="filters">
+        <button data-f="all" class="on">All</button>
+        <button data-f="fail">Failures</button>
+        <button data-f="409">409</button>
+      </div>
+    </div>
+    <ul class="feed" id="feed"><li class="empty">Waiting for bookings…</li></ul>
+  </aside>
+</main>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  };
+  const events = [];          // newest first
+  const MAX_FEED = 200;
+  let filter = "all";
+  let lastTotals = {};
+  const cards = new Map();    // showingId -> card element
+
+  const time = (iso) => new Date(iso).toLocaleTimeString([], { hour12: false });
+  const when = (iso) => new Date(iso).toLocaleString([], {
+    weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false,
+    timeZone: "Asia/Jerusalem",  // showings are in Israel, whatever the viewer's clock says
+  });
+  const kind = (e) => (e.status === 409 ? "conflict" : e.ok ? "ok" : "fail");
+
+  // ---- KPIs ----
+  function setKpi(id, value, totalKey, totals) {
+    const k = $(id);
+    k.querySelector("b").textContent = value;
+    if (totalKey && lastTotals[totalKey] !== undefined && totals[totalKey] > lastTotals[totalKey]) {
+      k.classList.remove("bump"); void k.offsetWidth; k.classList.add("bump");
+    }
+  }
+
+  function renderSummary(s) {
+    const pct = s.capacity ? ((s.sold + s.held) / s.capacity) * 100 : 0;
+    setKpi("k-occ", pct.toFixed(1) + "%");
+    setKpi("k-sold", `${s.sold} / ${s.capacity}`);
+    setKpi("k-held", s.held);
+    setKpi("k-fail", s.bookings_failed, "bookings_failed", s);
+    setKpi("k-409", s.conflicts, "conflicts", s);
+    setKpi("k-orph", s.orphans);
+    lastTotals = s;
+  }
+
+  // ---- Showing cards ----
+  function renderShowing(sh) {
+    let card = cards.get(sh.id);
+    if (!card) {
+      card = el("article", "card");
+      card.dataset.id = sh.id;
+      cards.set(sh.id, card);
+    }
+    card.replaceChildren();
+
+    const top = el("div", "row1");
+    const left = el("div");
+    left.append(el("h2", null, sh.movieTitle));
+    left.append(el("div", "meta", `${sh.theaterName} · Hall ${sh.hallNumber} · ${when(sh.startsAt)}`));
+    top.append(left);
+    const lockText = { open: "open", locked: "cancel-locked", playing: "playing", ended: "ended" }[sh.lock];
+    top.append(el("span", "badge " + sh.lock, lockText));
+    card.append(top);
+
+    const bar = el("div", "bar");
+    const s = el("div", "s"); s.style.width = (sh.sold / sh.capacity) * 100 + "%";
+    const h = el("div", "h"); h.style.width = (sh.held / sh.capacity) * 100 + "%";
+    bar.append(s, h);
+    card.append(bar);
+
+    const stats = el("div", "stats");
+    const stat = (label, v, cls) => {
+      const x = el("span", cls); x.append(el("b", null, v), " " + label); return x;
+    };
+    stats.append(
+      stat("full", Math.round(sh.occupancy * 100) + "%"),
+      stat("sold", sh.sold), stat("held", sh.held), stat("free", sh.available),
+    );
+    if (sh.orphans.length) stats.append(stat("orphan", sh.orphans.length, "o"));
+    card.append(stats);
+
+    const grid = el("div", "grid");
+    for (const r of sh.rows) {
+      const row = el("div", "grow");
+      row.append(el("em", null, r.row));
+      r.seats.forEach((st, i) => {
+        const orphan = r.orphans.includes(i);
+        const seat = el("i", "seat " + st + (orphan ? " orphan" : ""));
+        seat.title = `${r.row}${i + 1}: ${orphan ? "ORPHAN (free, boxed in)" : st}`;
+        row.append(seat);
+      });
+      grid.append(row);
+    }
+    card.append(grid);
+
+    if (sh.orphans.length) card.append(el("div", "orphans", "Orphan seats: " + sh.orphans.join(", ")));
+    return card;
+  }
+
+  function renderState(state) {
+    renderSummary(state.summary);
+    const box = $("shows");
+    const order = state.showings.map(renderShowing);
+    order.forEach((card, i) => { if (box.children[i] !== card) box.insertBefore(card, box.children[i] || null); });
+    $("updated").textContent = "updated " + new Date().toLocaleTimeString([], { hour12: false });
+  }
+
+  // ---- Activity feed ----
+  function eventNode(e, isNew) {
+    const li = el("li", "ev " + kind(e) + (isNew ? " new" : ""));
+    const top = el("div", "top");
+    top.append(el("span", "st", e.status), el("span", "act", e.action));
+    if (e.code) top.append(el("span", "code", e.code));
+    top.append(el("span", "t", time(e.ts)));
+    li.append(top);
+    const bits = [];
+    if (e.user) bits.push(e.user);
+    if (e.showingId) bits.push(e.showingId);
+    if (e.seats && e.seats.length) bits.push("seats " + e.seats.join(","));
+    if (e.orderId) bits.push(e.orderId);
+    const line = [bits.join(" · "), e.message].filter(Boolean).join(" — ");
+    if (line) li.append(el("div", "msg", line));
+    return li;
+  }
+
+  const visible = (e) =>
+    filter === "all" || (filter === "fail" && !e.ok) || (filter === "409" && e.status === 409);
+
+  function renderFeed() {
+    const feed = $("feed");
+    const shown = events.filter(visible);
+    feed.replaceChildren(...(shown.length ? shown.map((e) => eventNode(e, false))
+                                          : [el("li", "empty", "Nothing here yet.")]));
+  }
+
+  function addEvent(e) {
+    if (events.some((x) => x.id === e.id)) return;
+    events.unshift(e);
+    if (events.length > MAX_FEED) events.pop();
+    const feed = $("feed");
+    if (visible(e)) {
+      const empty = feed.querySelector(".empty");
+      if (empty) empty.remove();
+      feed.prepend(eventNode(e, true));
+      while (feed.children.length > MAX_FEED) feed.lastChild.remove();
+    }
+    const fresh = Date.now() - Date.parse(e.ts) < 5000;  // don't flash for replayed history
+    if (fresh && !e.ok && e.showingId && cards.has(e.showingId)) {
+      const card = cards.get(e.showingId);
+      const cls = e.status === 409 ? "flash-conflict" : "flash-fail";
+      card.classList.remove("flash-fail", "flash-conflict"); void card.offsetWidth; card.classList.add(cls);
+    }
+  }
+
+  $("filters").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button");
+    if (!b) return;
+    filter = b.dataset.f;
+    for (const x of $("filters").children) x.classList.toggle("on", x === b);
+    renderFeed();
+  });
+
+  // ---- Live connection (Server-Sent Events, reconnects on its own) ----
+  function setConn(state, text) {
+    const c = $("conn");
+    c.className = "conn " + state;
+    c.querySelector("span").textContent = text;
+  }
+
+  const source = new EventSource("/dashboard/events");
+  source.onopen = () => setConn("live", "live");
+  source.onerror = () => setConn("down", "reconnecting…");
+  source.addEventListener("state", (m) => renderState(JSON.parse(m.data)));
+  source.addEventListener("booking", (m) => addEvent(JSON.parse(m.data)));
+})();
+</script>
+</body>
+</html>

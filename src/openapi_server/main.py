@@ -18,6 +18,7 @@ from openapi_server.apis.orders_api import router as OrdersApiRouter
 from openapi_server.apis.showings_api import router as ShowingsApiRouter
 from openapi_server.auth import router as AuthRouter
 from openapi_server.errors import register_error_handlers
+from openapi_server import monitor
 
 app = FastAPI(
     title=" Event Ticket API",
@@ -27,6 +28,9 @@ app = FastAPI(
 )
 
 register_error_handlers(app)
+app.middleware("http")(monitor.record_requests)
+
+app.include_router(monitor.router)  # local dashboard at /dashboard
 
 app.include_router(AuthRouter)
 app.include_router(OrdersApiRouter)

@@ -4,7 +4,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from openapi_server import auth
+from openapi_server import auth, monitor
 from openapi_server.impl import orders_impl, showings_impl
 from openapi_server.main import app as application
 
@@ -19,6 +19,7 @@ def reset_state(monkeypatch):
     saved = {name: copy.deepcopy(getattr(showings_impl, name)) for name in _SHOWINGS_STATE}
     auth.USERS.clear()
     orders_impl.ORDERS.clear()
+    monitor.reset()
     # The real iteration count makes each register/login take ~0.5s.
     monkeypatch.setattr(auth, "PBKDF2_ITERATIONS", 1_000)
 
