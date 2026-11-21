@@ -12,18 +12,34 @@
 """  # noqa: E501
 
 
+import asyncio
+import contextlib
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from openapi_server.apis.orders_api import router as OrdersApiRouter
 from openapi_server.apis.showings_api import router as ShowingsApiRouter
 from openapi_server.auth import router as AuthRouter
 from openapi_server.errors import register_error_handlers
+from openapi_server.jobs import run_order_sweeper
+from openapi_server.webhooks import router as WebhooksRouter
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    sweeper = asyncio.create_task(run_order_sweeper())
+    yield
+    sweeper.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await sweeper
+
 
 app = FastAPI(
     title=" Event Ticket API",
     description="API for browsing cinema showings and ordering tickets. An order is created in a PENDING state (seats on hold), filled in step by step with PATCH, and then confirmed. If it is not confirmed before the hold expires, the order lapses on its own and the seats are released - no endpoint is called for that. ",
     version="1.0.0",
-    
+    lifespan=lifespan,
 )
 
 register_error_handlers(app)
@@ -31,3 +47,4 @@ register_error_handlers(app)
 app.include_router(AuthRouter)
 app.include_router(OrdersApiRouter)
 app.include_router(ShowingsApiRouter)
+app.include_router(WebhooksRouter)

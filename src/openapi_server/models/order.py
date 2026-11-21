@@ -44,7 +44,7 @@ class Order(BaseModel):
     total_price: Optional[Union[StrictFloat, StrictInt]] = Field(default=None, alias="totalPrice")
     currency: Optional[StrictStr] = Field(default=None, json_schema_extra={"examples": ["ILS"]})
     created_at: Optional[datetime] = Field(default=None, alias="createdAt")
-    hold_expires_at: Optional[datetime] = Field(default=None, description="When the hold on the seats expires. If the order is not confirmed by then, the server marks it EXPIRED and releases the seats. No client request is involved. ", alias="holdExpiresAt")
+    hold_expires_at: Optional[datetime] = Field(default=None, description="When the hold on the seats expires. If the order is not confirmed by then, the server marks it CONFIRMED if the payment webhook reported success, otherwise CANCELLED, and releases unsold seats. No client request is involved. ", alias="holdExpiresAt")
     __properties: ClassVar[List[str]] = ["id", "status", "showingId", "showing", "seats", "passengerName", "contactEmail", "paymentToken", "totalPrice", "currency", "createdAt", "holdExpiresAt"]
 
     @field_validator('status')

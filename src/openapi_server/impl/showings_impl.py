@@ -172,6 +172,7 @@ SEAT_LAYOUTS: Dict[str, Tuple[str, int]] = {
 # Which seats are already taken, per showing.
 # SOLD: showingId -> {seat}
 # HELD: showingId -> {seat: (orderId, expiresAt)}; None/None = a permanent demo hold.
+# (orderId, None) = a paid order's hold, kept until the order is settled.
 SOLD: Dict[str, Set[str]] = {
     "shw_10293": {"A1", "A2", "B3"},
     "shw_30101": {f"{r}{n}" for r in "AB" for n in range(1, 7)},

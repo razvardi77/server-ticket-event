@@ -482,7 +482,7 @@ components:
           type: string
         holdExpiresAt:
           description: |
-            When the hold on the seats expires. If the order is not confirmed by then, the server marks it EXPIRED and releases the seats. No client request is involved.
+            When the hold on the seats expires. If the order is not confirmed by then, the server marks it CONFIRMED if the payment webhook reported success, otherwise CANCELLED, and releases unsold seats. No client request is involved.
           format: date-time
           title: holdExpiresAt
           type: string

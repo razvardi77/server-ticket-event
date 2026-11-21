@@ -3,9 +3,13 @@
 # The real logic for the /orders endpoints.
 # orders_api.py automatically finds this class because it lives in the impl folder.
 #
-# Lifecycle: PENDING (seats held) -> CONFIRMED (seats sold)
+# Lifecycle: PENDING (seats held) -> CONFIRMED (confirm endpoint, seats sold)
 #                                 -> CANCELLED (DELETE, seats released)
-#                                 -> EXPIRED (hold ran out, seats released - no request needed)
+# When the hold runs out (HOLD_MINUTES after creation) a PENDING order is settled
+# without any client request, by the background job (openapi_server/jobs.py) or
+# on the next read, whichever comes first:
+#   payment webhook said "succeeded" -> CONFIRMED (seats sold)
+#   anything else                    -> CANCELLED (seats released)
 # A CONFIRMED order can still be cancelled (refund) until the showing starts.
 
 import os
@@ -29,13 +33,16 @@ from openapi_server.models.order import Order
 from openapi_server.models.order_create_request import OrderCreateRequest
 from openapi_server.models.order_patch_request import OrderPatchRequest
 
-HOLD_MINUTES = int(os.environ.get("ORDER_HOLD_MINUTES", "10"))
+HOLD_MINUTES = int(os.environ.get("ORDER_HOLD_MINUTES", "7"))
+
+# Values the payment webhook may report (stored as ORDERS[id]["paymentStatus"]).
+PAYMENT_STATUSES = ("succeeded", "failed")
 
 # Demo payment gateway: this token is declined, like Stripe's test token of the same name.
 DECLINED_TOKEN = "tok_chargeDeclined"
 
 # ---- Demo order store (later this will come from a database) ----
-# orderId -> {"owner": username, "order": Order}
+# orderId -> {"owner": username, "order": Order, "paymentStatus": None/"succeeded"/"failed"}
 ORDERS: Dict[str, dict] = {}
 
 
@@ -85,16 +92,69 @@ def _release(order: Order, seats: List[str]) -> None:
             del holds[seat]
 
 
+def _set_hold_expiry(order: Order, expires_at) -> None:
+    """Change the expiry of the holds this order still owns (never another order's)."""
+    holds = active_holds(order.showing_id)
+    for seat in order.seats:
+        if seat in holds and holds[seat][0] == order.id:
+            holds[seat] = (order.id, expires_at)
+
+
+def _seats_still_ours(order: Order) -> bool:
+    """False if any of the order's seats was sold or held by someone else meanwhile."""
+    holds = active_holds(order.showing_id)
+    sold = SOLD.get(order.showing_id, set())
+    return not any(
+        s in sold or (s in holds and holds[s][0] != order.id) for s in order.seats
+    )
+
+
+def _settle(entry: dict) -> None:
+    """Close a PENDING order whose hold ran out, using the webhook's payment flag."""
+    order = entry["order"]
+    if order.status != "PENDING" or order.hold_expires_at > _now():
+        return
+    if entry.get("paymentStatus") == "succeeded" and _seats_still_ours(order):
+        _release(order, order.seats)
+        SOLD.setdefault(order.showing_id, set()).update(order.seats)
+        order.status = "CONFIRMED"
+    else:
+        _release(order, order.seats)
+        order.status = "CANCELLED"
+
+
+def settle_overdue_orders() -> int:
+    """Settle every PENDING order past its hold. Run every minute by jobs.py."""
+    settled = 0
+    for entry in list(ORDERS.values()):
+        before = entry["order"].status
+        _settle(entry)
+        settled += entry["order"].status != before
+    return settled
+
+
+def record_payment_status(order_id: str, payment_status: str) -> None:
+    """Store the flag sent by the payment webhook. Settling is left to _settle."""
+    entry = ORDERS.get(order_id)
+    if entry is None:
+        raise ApiError(404, "ORDER_NOT_FOUND", "The requested order does not exist.")
+    entry["paymentStatus"] = payment_status
+    order = entry["order"]
+    if order.status == "PENDING":
+        # A paid order keeps its seats until it is settled, even past holdExpiresAt,
+        # so nobody else can grab them in the gap before the job runs.
+        _set_hold_expiry(
+            order, None if payment_status == "succeeded" else order.hold_expires_at
+        )
+
+
 def _load(order_id: str, username: str) -> Order:
-    """The caller's order, with the hold expiry applied. Other users' orders are 404."""
+    """The caller's order, settled if its hold ran out. Other users' orders are 404."""
     entry = ORDERS.get(order_id)
     if entry is None or entry["owner"] != username:
         raise ApiError(404, "ORDER_NOT_FOUND", "The requested order does not exist.")
-    order = entry["order"]
-    if order.status == "PENDING" and order.hold_expires_at <= _now():
-        _release(order, order.seats)
-        order.status = "EXPIRED"
-    return order
+    _settle(entry)
+    return entry["order"]
 
 
 def _require_pending(order: Order) -> None:
@@ -126,7 +186,7 @@ class OrdersImpl(BaseOrdersApi):
             hold_expires_at=now + timedelta(minutes=HOLD_MINUTES),
         )
         _hold(order)
-        ORDERS[order.id] = {"owner": username, "order": order}
+        ORDERS[order.id] = {"owner": username, "order": order, "paymentStatus": None}
         return order
 
     async def orders_order_id_get(self, orderId: str, username: str) -> Order:

@@ -307,7 +307,7 @@ def test_cancel_unknown_order(client, alice):
 
 # ---- Hold expiry ----
 def test_expired_order_status_and_seats(client, alice, expired_order, seat_status):
-    assert client.get(f"/orders/{expired_order['id']}", headers=alice).json()["status"] == "EXPIRED"
+    assert client.get(f"/orders/{expired_order['id']}", headers=alice).json()["status"] == "CANCELLED"
     assert all(seat_status(FREE_SHOWING, s) == "AVAILABLE" for s in expired_order["seats"])
 
 
@@ -332,5 +332,127 @@ def test_expired_seats_can_be_rebooked_and_stay_held(client, alice, bob, expired
     create_order(bob, seats=[seat])
 
     # Loading alice's order applies her expiry; it must not release bob's new hold.
-    assert client.get(f"/orders/{expired_order['id']}", headers=alice).json()["status"] == "EXPIRED"
+    assert client.get(f"/orders/{expired_order['id']}", headers=alice).json()["status"] == "CANCELLED"
     assert seat_status(FREE_SHOWING, seat) == "HELD"
+
+
+# ---- Payment webhook + background settlement ----
+def _webhook(client, order_id, status, signature=None):
+    from openapi_server import webhooks
+
+    body = f'{{"orderId": "{order_id}", "status": "{status}"}}'.encode()
+    sig = webhooks.sign(body) if signature is None else signature
+    return client.post("/webhooks/payment", content=body, headers={"X-Webhook-Signature": sig})
+
+
+def _make_overdue(order_id):
+    orders_impl.ORDERS[order_id]["order"].hold_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+
+def test_webhook_rejects_bad_signature(client, alice, create_order):
+    order = create_order(alice)
+    r = _webhook(client, order["id"], "succeeded", signature="nope")
+    assert r.status_code == 401
+    assert r.json()["code"] == "INVALID_SIGNATURE"
+    assert orders_impl.ORDERS[order["id"]]["paymentStatus"] is None
+
+
+def test_webhook_unknown_order(client):
+    assert _webhook(client, "ord_nope", "succeeded").status_code == 404
+
+
+def test_webhook_bad_status(client, alice, create_order):
+    order = create_order(alice)
+    r = _webhook(client, order["id"], "maybe")
+    assert r.status_code == 400
+    assert r.json()["code"] == "INVALID_EVENT"
+
+
+def test_webhook_only_records_flag(client, alice, create_order):
+    order = create_order(alice)
+    assert _webhook(client, order["id"], "succeeded").status_code == 204
+
+    assert orders_impl.ORDERS[order["id"]]["paymentStatus"] == "succeeded"
+    assert client.get(f"/orders/{order['id']}", headers=alice).json()["status"] == "PENDING"
+
+
+def test_sweep_confirms_paid_overdue_order(client, alice, create_order, seat_status):
+    order = create_order(alice)
+    _webhook(client, order["id"], "succeeded")
+    _make_overdue(order["id"])
+
+    assert orders_impl.settle_overdue_orders() == 1
+    assert orders_impl.ORDERS[order["id"]]["order"].status == "CONFIRMED"
+    assert all(seat_status(FREE_SHOWING, s) == "SOLD" for s in order["seats"])
+
+
+@pytest.mark.parametrize("payment", [None, "failed"])
+def test_sweep_cancels_unpaid_overdue_order(client, alice, create_order, seat_status, payment):
+    order = create_order(alice)
+    if payment:
+        _webhook(client, order["id"], payment)
+    _make_overdue(order["id"])
+
+    assert orders_impl.settle_overdue_orders() == 1
+    assert orders_impl.ORDERS[order["id"]]["order"].status == "CANCELLED"
+    assert all(seat_status(FREE_SHOWING, s) == "AVAILABLE" for s in order["seats"])
+
+
+def test_sweep_leaves_orders_within_hold(client, alice, create_order):
+    order = create_order(alice)
+    _webhook(client, order["id"], "succeeded")
+
+    assert orders_impl.settle_overdue_orders() == 0
+    assert orders_impl.ORDERS[order["id"]]["order"].status == "PENDING"
+
+
+def test_paid_seats_stay_held_until_settled(client, alice, bob, create_order, seat_status):
+    order = create_order(alice)
+    _webhook(client, order["id"], "succeeded")
+    _make_overdue(order["id"])  # hold time is up, the job has not run yet
+
+    r = client.post("/orders", headers=bob, json={"showingId": FREE_SHOWING, "seats": order["seats"]})
+    assert r.status_code == 409
+    assert seat_status(FREE_SHOWING, order["seats"][0]) == "HELD"
+
+
+def test_reading_overdue_paid_order_confirms_it(client, alice, create_order):
+    order = create_order(alice)
+    _webhook(client, order["id"], "succeeded")
+    _make_overdue(order["id"])
+
+    assert client.get(f"/orders/{order['id']}", headers=alice).json()["status"] == "CONFIRMED"
+
+
+def test_late_payment_after_seats_taken_cancels(client, alice, bob, expired_order, create_order, seat_status):
+    seat = expired_order["seats"][0]
+    create_order(bob, seats=[seat])  # alice's hold lapsed, bob took the seat
+    _webhook(client, expired_order["id"], "succeeded")
+
+    orders_impl.settle_overdue_orders()
+    assert orders_impl.ORDERS[expired_order["id"]]["order"].status == "CANCELLED"
+    assert seat_status(FREE_SHOWING, seat) == "HELD"  # bob's hold is untouched
+
+
+def test_background_job_runs_on_its_own(client, alice, create_order):
+    import asyncio
+
+    from openapi_server.jobs import run_order_sweeper
+
+    order = create_order(alice)
+    _make_overdue(order["id"])
+
+    async def run_briefly():
+        task = asyncio.create_task(run_order_sweeper(interval=0.01))
+        await asyncio.sleep(0.05)
+        task.cancel()
+
+    asyncio.run(run_briefly())
+    assert orders_impl.ORDERS[order["id"]]["order"].status == "CANCELLED"
+
+
+def test_app_starts_and_stops_sweeper(app):
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as c:  # runs the lifespan: start and cancel the job
+        assert c.get("/showings").status_code == 200
