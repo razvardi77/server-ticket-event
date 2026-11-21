@@ -2,7 +2,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from openapi_server.impl.showings_impl import HELD, SEAT_LAYOUTS, SHOWINGS, SOLD
+from openapi_server.impl.showings_impl import (
+    DEMO_DAY_ZERO,
+    HELD,
+    SEAT_LAYOUTS,
+    SHOWINGS,
+    SOLD,
+    demo_starts_at,
+)
 
 SHOWING_FIELDS = {
     "id", "movieTitle", "theaterName", "location", "hallNumber", "startsAt", "pricePerSeat", "currency",
@@ -11,6 +18,9 @@ SHOWING_FIELDS = {
 
 def _ids(response):
     return {s["id"] for s in response.json()}
+
+
+DAY_ZERO = DEMO_DAY_ZERO.isoformat()  # local date of the day-0 showings
 
 
 # ---- GET /showings ----
@@ -29,10 +39,10 @@ def test_list_all_showings(client):
         ({"city": "jerusalem"}, {"shw_20511", "shw_50301", "shw_40201"}),
         ({"city": "JERUSALEM"}, {"shw_20511", "shw_50301", "shw_40201"}),
         ({"city": "rishon"}, {"shw_10310", "shw_40202", "shw_20530", "shw_60401"}),
-        ({"date": "2026-10-02"}, {"shw_10293", "shw_20511", "shw_30102"}),
+        ({"date": DAY_ZERO}, {"shw_10293", "shw_20511", "shw_30102"}),
         ({"movieId": "mov_dune2"}, {"shw_30101", "shw_30102"}),
         ({"movieId": "mov_interstellar", "city": "rishon"}, {"shw_20530"}),
-        ({"date": "2026-10-02", "city": "beer sheva"}, {"shw_30102"}),
+        ({"date": DAY_ZERO, "city": "beer sheva"}, {"shw_30102"}),
     ],
 )
 def test_list_showings_filters(client, params, expected):
@@ -64,7 +74,7 @@ def test_get_showing(client):
         "theaterName": "Cinema City Glilot",
         "location": "Glilot, Tel Aviv",
         "hallNumber": 7,
-        "startsAt": "2026-10-02T20:30:00+03:00",
+        "startsAt": demo_starts_at(0, "20:30", 3),
         "pricePerSeat": 49.9,
         "currency": "ILS",
     }
